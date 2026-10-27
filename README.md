@@ -17,19 +17,7 @@ I'm a student in Japan learning C and networking, and I'm building this to under
 - Status: OK / NEED HELP / TRAPPED (press 1, 2, 3)
 - Anyone who goes quiet for 10 seconds drops off the list
 
-### Try it
 
-You need Windows and gcc (MinGW-w64).
-
-```
-cd files
-gcc peer.c -o peer.exe -lws2_32
-peer.exe Yuno
-```
-
-Open a second terminal and run `peer.exe Mika`. After a few seconds each one should show the other.
-
-Notes: run it in Command Prompt or PowerShell, because some terminals ignore key presses. If Windows asks about the firewall, allow it. School Wi-Fi often blocks broadcast, so a phone hotspot works better for testing on two PCs.
 
 ### Plan
 
