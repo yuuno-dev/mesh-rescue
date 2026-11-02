@@ -1,11 +1,12 @@
-/* peer.c - Step 1 + tiny web page.
- * Find nearby peers with UDP broadcast (no server), and serve a
- * simple page you can open in a browser.
+/* peer.c - ステップ1 + 近くの人を表示するWebページ
  *
- * Build:  gcc peer.c -o peer.exe -lws2_32
- * Run:    peer.exe Yuno        (run 2-3 copies with different names)
- * Keys:   1 = OK   2 = NEED HELP   3 = TRAPPED   q = quit
- * Web:    open http://localhost:8080 (the port is shown on screen)
+ * UDPブロードキャストを使い、サーバーなしで近くの端末を見つける。
+ * 見つけた人の一覧は、ブラウザで開けるページにも表示する。
+ *
+ * ビルド: gcc peer.c -o peer.exe -lws2_32
+ * 実行:   peer.exe Yuno   (名前を変えて2~3個起動する)
+ * キー:   1 = OK   2 = 助けが必要   3 = 閉じ込められた   q = 終了
+ * Web:    http://localhost:8080 を開く(ポート番号は画面に表示される)
  */
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -19,17 +20,18 @@
 #define WEB_PORT_FIRST 8080
 #define WEB_PORT_LAST  8089
 
+/* 近くにいる1人分の情報 */
 typedef struct {
-    int used;
-    unsigned id;
-    char name[NAME_LEN];
-    int status;
-    DWORD last_seen;
+    int used;            /* 1 = このスロットを使っている */
+    unsigned id;         /* 相手のID(起動ごとにランダム) */
+    char name[NAME_LEN]; /* 相手の名前 */
+    int status;          /* 相手の状態(OK / 助けが必要 / 閉じ込められた) */
+    DWORD last_seen;     /* 最後に聞こえた時刻(ミリ秒) */
 } Peer;
 
 static Peer peers[MAX_PEERS];
 
-/* Add a new peer or refresh an existing one. */
+/* 相手を一覧に追加する。すでに一覧にいる場合は情報を更新する。 */
 static void update_peer(unsigned id, const char *name, int status)
 {
     int i, slot = -1;
@@ -37,7 +39,7 @@ static void update_peer(unsigned id, const char *name, int status)
         if (peers[i].used && peers[i].id == id) { slot = i; break; }
         if (!peers[i].used && slot < 0) slot = i;
     }
-    if (slot < 0) return; /* table full */
+    if (slot < 0) return; /* 一覧がいっぱいなので何もしない */
     peers[slot].used = 1;
     peers[slot].id = id;
     strncpy(peers[slot].name, name, NAME_LEN - 1);
@@ -46,7 +48,7 @@ static void update_peer(unsigned id, const char *name, int status)
     peers[slot].last_seen = GetTickCount();
 }
 
-/* Forget peers we have not heard from for PEER_TIMEOUT ms. */
+/* PEER_TIMEOUT ミリ秒の間、聞こえなかった人を一覧から消す。 */
 static void prune_peers(void)
 {
     int i;
@@ -56,6 +58,7 @@ static void prune_peers(void)
             peers[i].used = 0;
 }
 
+/* 画面をクリアして、自分の状態と近くの人の一覧を表示する。 */
 static void print_table(const char *my_name, int my_status, int web_port)
 {
     int i, count = 0;
@@ -78,6 +81,7 @@ static void print_table(const char *my_name, int my_status, int web_port)
     if (count == 0) printf("  (nobody yet)\n");
 }
 
+/* HELLOメッセージを1回送る。形式は HELLO|ID|名前|状態 。 */
 static void send_hello(SOCKET s, struct sockaddr_in *to, unsigned id,
                        const char *name, int status)
 {
@@ -86,8 +90,9 @@ static void send_hello(SOCKET s, struct sockaddr_in *to, unsigned id,
     sendto(s, buf, n, 0, (struct sockaddr *)to, sizeof *to);
 }
 
-/* Open a TCP socket for the web page. Tries ports 8080-8089 so that
- * several copies on one PC do not fight over the same port. */
+/* Webページ用のTCPソケットを開く。
+ * 同じPCで複数起動してもぶつからないように、
+ * 8080~8089の中から空いているポートを探す。 */
 static SOCKET open_web(int *port_out)
 {
     int port;
@@ -110,25 +115,94 @@ static SOCKET open_web(int *port_out)
     return INVALID_SOCKET;
 }
 
-/* Answer one browser request with a very small HTML page. */
-static void handle_web(SOCKET web, const char *my_name)
+/* HTMLに入れても安全な文字列にする。
+ * 名前はネットワークから届くので、< > & " を別の書き方に変える。 */
+static void html_escape(char *dst, size_t cap, const char *src)
+{
+    size_t n = 0;
+    for (; *src && n + 7 < cap; src++) {
+        const char *r = NULL;
+        if (*src == '<') r = "&lt;";
+        else if (*src == '>') r = "&gt;";
+        else if (*src == '&') r = "&amp;";
+        else if (*src == '"') r = "&quot;";
+        if (r) {
+            size_t l = strlen(r);
+            memcpy(dst + n, r, l);
+            n += l;
+        } else {
+            dst[n++] = *src;
+        }
+    }
+    dst[n] = '\0';
+}
+
+/* ページ用のバッファに文字を追加する。バッファからあふれないようにする。 */
+#define ADD(...) do { \
+    if (n < cap) { \
+        int w = snprintf(out + n, cap - n, __VA_ARGS__); \
+        if (w > 0) n += (size_t)w; \
+        if (n >= cap) n = cap - 1; \
+    } \
+} while (0)
+
+/* HTMLページ全体を作り、その長さ(バイト数)を返す。 */
+static int build_page(char *out, size_t cap, const char *my_name, int my_status)
+{
+    size_t n = 0;
+    int i, count = 0;
+    DWORD now = GetTickCount();
+    char esc[NAME_LEN * 6 + 1];
+
+    for (i = 0; i < MAX_PEERS; i++)
+        if (peers[i].used) count++;
+
+    html_escape(esc, sizeof esc, my_name);
+    ADD("<!doctype html><html><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        "<meta http-equiv=\"refresh\" content=\"3\">"
+        "<title>mesh-rescue</title><style>"
+        "body{font-family:sans-serif;max-width:420px;margin:0 auto;padding:16px}"
+        ".row{display:flex;justify-content:space-between;align-items:center;"
+        "padding:10px 0;border-top:1px solid #ddd}"
+        ".chip{padding:3px 10px;border-radius:8px;font-size:13px;font-weight:bold}"
+        ".s0{background:#d9f2d9;color:#1b5e20}"
+        ".s1{background:#fff0c2;color:#7a5200}"
+        ".s2{background:#ffd6d6;color:#8a1111}"
+        ".age{font-size:12px;color:#777}"
+        "</style></head><body>");
+    ADD("<h1>mesh-rescue</h1>");
+    ADD("<p>You are %s <span class=\"chip s%d\">%s</span></p>",
+        esc, my_status, status_text(my_status));
+    ADD("<h2>Nearby people (%d)</h2>", count);
+    if (count == 0)
+        ADD("<p class=\"age\">Nobody nearby yet.</p>");
+    for (i = 0; i < MAX_PEERS; i++) {
+        if (!peers[i].used) continue;
+        html_escape(esc, sizeof esc, peers[i].name);
+        ADD("<div class=\"row\"><div>%s<div class=\"age\">heard %lu s ago</div></div>"
+            "<span class=\"chip s%d\">%s</span></div>",
+            esc, (unsigned long)((now - peers[i].last_seen) / 1000),
+            peers[i].status, status_text(peers[i].status));
+    }
+    ADD("</body></html>");
+    return (int)n;
+}
+
+/* ブラウザからの要求1回に、ページを返して答える。 */
+static void handle_web(SOCKET web, const char *my_name, int my_status)
 {
     SOCKET c = accept(web, NULL, NULL);
-    char req[1024], head[256], body[512];
+    char req[1024], head[256], body[12288];
     DWORD timeout_ms = 300;
     int n, body_len, head_len;
 
     if (c == INVALID_SOCKET) return;
-    /* Do not wait forever if the browser opens a connection and says nothing. */
+    /* ブラウザが接続だけして何も送ってこない場合に、ずっと待たないようにする。 */
     setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout_ms, sizeof timeout_ms);
     n = recv(c, req, sizeof req - 1, 0);
     if (n > 0) {
-        body_len = snprintf(body, sizeof body,
-            "<!doctype html><html><head><meta charset=\"utf-8\">"
-            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-            "<title>mesh-rescue</title></head>"
-            "<body><h1>mesh-rescue</h1><p>Hello from %s</p></body></html>",
-            my_name);
+        body_len = build_page(body, sizeof body, my_name, my_status);
         head_len = snprintf(head, sizeof head,
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: text/html; charset=utf-8\r\n"
@@ -161,7 +235,7 @@ int main(int argc, char **argv)
     s = socket(AF_INET, SOCK_DGRAM, 0);
     if (s == INVALID_SOCKET) { printf("socket failed\n"); return 1; }
 
-    /* Allow several copies on one PC, and allow broadcasting. */
+    /* 同じPCで複数起動できるようにし、ブロードキャストも許可する。 */
     setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char *)&yes, sizeof yes);
     setsockopt(s, SOL_SOCKET, SO_BROADCAST, (char *)&yes, sizeof yes);
 
@@ -183,7 +257,7 @@ int main(int argc, char **argv)
 
     for (;;) {
         fd_set rd;
-        struct timeval tv = {0, 200000}; /* wait up to 200 ms */
+        struct timeval tv = {0, 200000}; /* 最大200ミリ秒待つ */
         DWORD now;
 
         FD_ZERO(&rd);
@@ -204,7 +278,7 @@ int main(int argc, char **argv)
                 }
             }
             if (web != INVALID_SOCKET && FD_ISSET(web, &rd))
-                handle_web(web, my_name);
+                handle_web(web, my_name, my_status);
         }
 
         while (_kbhit()) {
@@ -218,7 +292,7 @@ int main(int argc, char **argv)
                 WSACleanup();
                 return 0;
             }
-            last_hello = 0; /* send the new status right away */
+            last_hello = 0; /* 新しい状態をすぐに送る */
         }
 
         now = GetTickCount();

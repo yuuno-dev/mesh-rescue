@@ -1,27 +1,30 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
-/* Mesh-rescue protocol, version 1.
- * Messages are plain text so they are easy to read in Wireshark.
+/* mesh-rescue 通信ルール(バージョン1)
+ * メッセージは普通のテキストなので、Wiresharkなどで読みやすい。
  *
- * HELLO|<id hex>|<name>|<status>
+ * HELLO|<ID(16進数)>|<名前>|<状態>
  *
- * Step 2 will add:  MSG|<msg id hex>|<ttl>|<from id hex>|<text>
+ * ステップ2で追加する予定:
+ *   MSG|<メッセージID(16進数)>|<TTL>|<送信者ID(16進数)>|<本文>
  */
 
-#define MESH_PORT       47000
-#define HELLO_INTERVAL  3000    /* ms between HELLO broadcasts */
-#define PEER_TIMEOUT    10000   /* ms before a silent peer is removed */
-#define NAME_LEN        32
-#define MAX_PEERS       32
-#define BUF_SIZE        256
+#define MESH_PORT       47000   /* 端末どうしが使うUDPポート */
+#define HELLO_INTERVAL  3000    /* HELLOを送る間隔(ミリ秒) */
+#define PEER_TIMEOUT    10000   /* この時間聞こえない人は一覧から消す(ミリ秒) */
+#define NAME_LEN        32      /* 名前の最大バイト数(終端文字を含む) */
+#define MAX_PEERS       32      /* 一覧に入れられる人数 */
+#define BUF_SIZE        256     /* 受信バッファの大きさ */
 
+/* 状態の番号 */
 enum {
     STATUS_OK = 0,
     STATUS_NEED_HELP = 1,
     STATUS_TRAPPED = 2
 };
 
+/* 状態の番号を表示用の文字に変える */
 static const char *status_text(int s)
 {
     switch (s) {
