@@ -35,4 +35,15 @@ static const char *status_text(int s)
     }
 }
 
+/* 状態の番号を、画面に出す日本語に変える */
+static const char *status_text_ja(int s)
+{
+    switch (s) {
+    case STATUS_OK:        return "無事";
+    case STATUS_NEED_HELP: return "助けが必要";
+    case STATUS_TRAPPED:   return "閉じ込められた";
+    default:               return "?";
+    }
+}
+
 #endif

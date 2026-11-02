@@ -1,12 +1,12 @@
-/* peer.c - ƒXƒeƒbƒv1 + ‹ß‚­‚Ìl‚Ì•\¦‚Æó‘Ôƒ{ƒ^ƒ“‚ª‚ ‚éWebƒy[ƒW
+/* peer.c - ã‚¹ãƒ†ãƒƒãƒ—1 + æ—¥æœ¬èªã®Webãƒšãƒ¼ã‚¸(è¿‘ãã®äººã®ä¸€è¦§ã€çŠ¶æ…‹ãƒœã‚¿ãƒ³ã€SOSãƒœã‚¿ãƒ³)
  *
- * UDPƒuƒ[ƒhƒLƒƒƒXƒg‚ğg‚¢AƒT[ƒo[‚È‚µ‚Å‹ß‚­‚Ì’[––‚ğŒ©‚Â‚¯‚éB
- * Œ©‚Â‚¯‚½l‚Ìˆê——‚ÍAƒuƒ‰ƒEƒU‚ÅŠJ‚¯‚éƒy[ƒW‚É‚à•\¦‚·‚éB
+ * UDPãƒ–ãƒ­ãƒ¼ãƒ‰ã‚­ãƒ£ã‚¹ãƒˆã‚’ä½¿ã„ã€ã‚µãƒ¼ãƒãƒ¼ãªã—ã§è¿‘ãã®ç«¯æœ«ã‚’è¦‹ã¤ã‘ã‚‹ã€‚
+ * è¦‹ã¤ã‘ãŸäººã®ä¸€è¦§ã¯ã€ãƒ–ãƒ©ã‚¦ã‚¶ã§é–‹ã‘ã‚‹ãƒšãƒ¼ã‚¸ã«ã‚‚è¡¨ç¤ºã™ã‚‹ã€‚
  *
- * ƒrƒ‹ƒh: gcc peer.c -o peer.exe -lws2_32
- * Às:   peer.exe Yuno   (–¼‘O‚ğ•Ï‚¦‚Ä2~3ŒÂ‹N“®‚·‚é)
- * ƒL[:   1 = OK   2 = •‚¯‚ª•K—v   3 = •Â‚¶‚ß‚ç‚ê‚½   q = I—¹
- * Web:    http://localhost:8080 ‚ğŠJ‚­(ƒ|[ƒg”Ô†‚Í‰æ–Ê‚É•\¦‚³‚ê‚é)
+ * ãƒ“ãƒ«ãƒ‰: gcc peer.c -o peer.exe -lws2_32
+ * å®Ÿè¡Œ:   peer.exe Yuno   (åå‰ã‚’å¤‰ãˆã¦2~3å€‹èµ·å‹•ã™ã‚‹)
+ * ã‚­ãƒ¼:   1 = OK   2 = åŠ©ã‘ãŒå¿…è¦   3 = é–‰ã˜è¾¼ã‚ã‚‰ã‚ŒãŸ   q = çµ‚äº†
+ * Web:    http://localhost:8080 ã‚’é–‹ã(ãƒãƒ¼ãƒˆç•ªå·ã¯ç”»é¢ã«è¡¨ç¤ºã•ã‚Œã‚‹)
  */
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -19,19 +19,20 @@
 
 #define WEB_PORT_FIRST 8080
 #define WEB_PORT_LAST  8089
+#define SOS_COOLDOWN_MS 5000  /* SOSã‚’ç¶šã‘ã¦é€ã‚Œãªã„æ™‚é–“(ãƒŸãƒªç§’) */
 
-/* ‹ß‚­‚É‚¢‚é1l•ª‚Ìî•ñ */
+/* è¿‘ãã«ã„ã‚‹1äººåˆ†ã®æƒ…å ± */
 typedef struct {
-    int used;            /* 1 = ‚±‚ÌƒXƒƒbƒg‚ğg‚Á‚Ä‚¢‚é */
-    unsigned id;         /* ‘Šè‚ÌID(‹N“®‚²‚Æ‚Éƒ‰ƒ“ƒ_ƒ€) */
-    char name[NAME_LEN]; /* ‘Šè‚Ì–¼‘O */
-    int status;          /* ‘Šè‚Ìó‘Ô(OK / •‚¯‚ª•K—v / •Â‚¶‚ß‚ç‚ê‚½) */
-    DWORD last_seen;     /* ÅŒã‚É•·‚±‚¦‚½(ƒ~ƒŠ•b) */
+    int used;            /* 1 = ã“ã®ã‚¹ãƒ­ãƒƒãƒˆã‚’ä½¿ã£ã¦ã„ã‚‹ */
+    unsigned id;         /* ç›¸æ‰‹ã®ID(èµ·å‹•ã”ã¨ã«ãƒ©ãƒ³ãƒ€ãƒ ) */
+    char name[NAME_LEN]; /* ç›¸æ‰‹ã®åå‰ */
+    int status;          /* ç›¸æ‰‹ã®çŠ¶æ…‹(OK / åŠ©ã‘ãŒå¿…è¦ / é–‰ã˜è¾¼ã‚ã‚‰ã‚ŒãŸ) */
+    DWORD last_seen;     /* æœ€å¾Œã«èã“ãˆãŸæ™‚åˆ»(ãƒŸãƒªç§’) */
 } Peer;
 
 static Peer peers[MAX_PEERS];
 
-/* ‘Šè‚ğˆê——‚É’Ç‰Á‚·‚éB‚·‚Å‚Éˆê——‚É‚¢‚éê‡‚Íî•ñ‚ğXV‚·‚éB */
+/* ç›¸æ‰‹ã‚’ä¸€è¦§ã«è¿½åŠ ã™ã‚‹ã€‚ã™ã§ã«ä¸€è¦§ã«ã„ã‚‹å ´åˆã¯æƒ…å ±ã‚’æ›´æ–°ã™ã‚‹ã€‚ */
 static void update_peer(unsigned id, const char *name, int status)
 {
     int i, slot = -1;
@@ -39,7 +40,7 @@ static void update_peer(unsigned id, const char *name, int status)
         if (peers[i].used && peers[i].id == id) { slot = i; break; }
         if (!peers[i].used && slot < 0) slot = i;
     }
-    if (slot < 0) return; /* ˆê——‚ª‚¢‚Á‚Ï‚¢‚È‚Ì‚Å‰½‚à‚µ‚È‚¢ */
+    if (slot < 0) return; /* ä¸€è¦§ãŒã„ã£ã±ã„ãªã®ã§ä½•ã‚‚ã—ãªã„ */
     peers[slot].used = 1;
     peers[slot].id = id;
     strncpy(peers[slot].name, name, NAME_LEN - 1);
@@ -48,7 +49,7 @@ static void update_peer(unsigned id, const char *name, int status)
     peers[slot].last_seen = GetTickCount();
 }
 
-/* PEER_TIMEOUT ƒ~ƒŠ•b‚ÌŠÔA•·‚±‚¦‚È‚©‚Á‚½l‚ğˆê——‚©‚çÁ‚·B */
+/* PEER_TIMEOUT ãƒŸãƒªç§’ã®é–“ã€èã“ãˆãªã‹ã£ãŸäººã‚’ä¸€è¦§ã‹ã‚‰æ¶ˆã™ã€‚ */
 static void prune_peers(void)
 {
     int i;
@@ -58,7 +59,7 @@ static void prune_peers(void)
             peers[i].used = 0;
 }
 
-/* ‰æ–Ê‚ğƒNƒŠƒA‚µ‚ÄA©•ª‚Ìó‘Ô‚Æ‹ß‚­‚Ìl‚Ìˆê——‚ğ•\¦‚·‚éB */
+/* ç”»é¢ã‚’ã‚¯ãƒªã‚¢ã—ã¦ã€è‡ªåˆ†ã®çŠ¶æ…‹ã¨è¿‘ãã®äººã®ä¸€è¦§ã‚’è¡¨ç¤ºã™ã‚‹ã€‚ */
 static void print_table(const char *my_name, int my_status, int web_port)
 {
     int i, count = 0;
@@ -81,7 +82,7 @@ static void print_table(const char *my_name, int my_status, int web_port)
     if (count == 0) printf("  (nobody yet)\n");
 }
 
-/* HELLOƒƒbƒZ[ƒW‚ğ1‰ñ‘—‚éBŒ`®‚Í HELLO|ID|–¼‘O|ó‘Ô B */
+/* HELLOãƒ¡ãƒƒã‚»ãƒ¼ã‚¸ã‚’1å›é€ã‚‹ã€‚å½¢å¼ã¯ HELLO|ID|åå‰|çŠ¶æ…‹ ã€‚ */
 static void send_hello(SOCKET s, struct sockaddr_in *to, unsigned id,
                        const char *name, int status)
 {
@@ -90,9 +91,9 @@ static void send_hello(SOCKET s, struct sockaddr_in *to, unsigned id,
     sendto(s, buf, n, 0, (struct sockaddr *)to, sizeof *to);
 }
 
-/* Webƒy[ƒW—p‚ÌTCPƒ\ƒPƒbƒg‚ğŠJ‚­B
- * “¯‚¶PC‚Å•¡”‹N“®‚µ‚Ä‚à‚Ô‚Â‚©‚ç‚È‚¢‚æ‚¤‚ÉA
- * 8080~8089‚Ì’†‚©‚ç‹ó‚¢‚Ä‚¢‚éƒ|[ƒg‚ğ’T‚·B */
+/* Webãƒšãƒ¼ã‚¸ç”¨ã®TCPã‚½ã‚±ãƒƒãƒˆã‚’é–‹ãã€‚
+ * åŒã˜PCã§è¤‡æ•°èµ·å‹•ã—ã¦ã‚‚ã¶ã¤ã‹ã‚‰ãªã„ã‚ˆã†ã«ã€
+ * 8080~8089ã®ä¸­ã‹ã‚‰ç©ºã„ã¦ã„ã‚‹ãƒãƒ¼ãƒˆã‚’æ¢ã™ã€‚ */
 static SOCKET open_web(int *port_out)
 {
     int port;
@@ -115,8 +116,8 @@ static SOCKET open_web(int *port_out)
     return INVALID_SOCKET;
 }
 
-/* HTML‚É“ü‚ê‚Ä‚àˆÀ‘S‚È•¶š—ñ‚É‚·‚éB
- * –¼‘O‚Íƒlƒbƒgƒ[ƒN‚©‚ç“Í‚­‚Ì‚ÅA< > & " ‚ğ•Ê‚Ì‘‚«•û‚É•Ï‚¦‚éB */
+/* HTMLã«å…¥ã‚Œã¦ã‚‚å®‰å…¨ãªæ–‡å­—åˆ—ã«ã™ã‚‹ã€‚
+ * åå‰ã¯ãƒãƒƒãƒˆãƒ¯ãƒ¼ã‚¯ã‹ã‚‰å±Šãã®ã§ã€< > & " ã‚’åˆ¥ã®æ›¸ãæ–¹ã«å¤‰ãˆã‚‹ã€‚ */
 static void html_escape(char *dst, size_t cap, const char *src)
 {
     size_t n = 0;
@@ -137,7 +138,7 @@ static void html_escape(char *dst, size_t cap, const char *src)
     dst[n] = '\0';
 }
 
-/* ƒy[ƒW—p‚Ìƒoƒbƒtƒ@‚É•¶š‚ğ’Ç‰Á‚·‚éBƒoƒbƒtƒ@‚©‚ç‚ ‚Ó‚ê‚È‚¢‚æ‚¤‚É‚·‚éB */
+/* ãƒšãƒ¼ã‚¸ç”¨ã®ãƒãƒƒãƒ•ã‚¡ã«æ–‡å­—ã‚’è¿½åŠ ã™ã‚‹ã€‚ãƒãƒƒãƒ•ã‚¡ã‹ã‚‰ã‚ãµã‚Œãªã„ã‚ˆã†ã«ã™ã‚‹ã€‚ */
 #define ADD(...) do { \
     if (n < cap) { \
         int w = snprintf(out + n, cap - n, __VA_ARGS__); \
@@ -146,7 +147,11 @@ static void html_escape(char *dst, size_t cap, const char *src)
     } \
 } while (0)
 
-/* HTMLƒy[ƒW‘S‘Ì‚ğì‚èA‚»‚Ì’·‚³(ƒoƒCƒg”)‚ğ•Ô‚·B */
+/* SOSãƒœã‚¿ãƒ³ã®è¨˜éŒ²ã€‚ç¶šã‘ã¦ä½•å›ã‚‚æŠ¼ã•ã‚Œãªã„ã‚ˆã†ã«ã™ã‚‹ãŸã‚ã«ä½¿ã†ã€‚ */
+static DWORD g_last_sos = 0; /* æœ€å¾Œã«SOSã‚’é€ã£ãŸæ™‚åˆ»(ãƒŸãƒªç§’) */
+static int g_sos_sent = 0;   /* 1 = ä¸€åº¦ã§ã‚‚SOSã‚’é€ã£ãŸ */
+
+/* HTMLãƒšãƒ¼ã‚¸å…¨ä½“ã‚’ä½œã‚Šã€ãã®é•·ã•(ãƒã‚¤ãƒˆæ•°)ã‚’è¿”ã™ã€‚ */
 static int build_page(char *out, size_t cap, const char *my_name, int my_status)
 {
     size_t n = 0;
@@ -158,53 +163,85 @@ static int build_page(char *out, size_t cap, const char *my_name, int my_status)
         if (peers[i].used) count++;
 
     html_escape(esc, sizeof esc, my_name);
-    ADD("<!doctype html><html><head><meta charset=\"utf-8\">"
+    ADD("<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
         "<meta http-equiv=\"refresh\" content=\"3\">"
         "<title>mesh-rescue</title><style>"
-        "body{font-family:sans-serif;max-width:420px;margin:0 auto;padding:16px}"
+        "body{font-family:sans-serif;max-width:420px;margin:0 auto;padding:16px;color:#222}"
+        ".top{display:flex;justify-content:space-between;align-items:center}"
+        ".top b{font-size:18px}"
+        ".sm{font-size:13px;color:#666}"
         ".row{display:flex;justify-content:space-between;align-items:center;"
         "padding:10px 0;border-top:1px solid #ddd}"
         ".chip{padding:3px 10px;border-radius:8px;font-size:13px;font-weight:bold}"
         ".s0{background:#d9f2d9;color:#1b5e20}"
         ".s1{background:#fff0c2;color:#7a5200}"
         ".s2{background:#ffd6d6;color:#8a1111}"
-        ".age{font-size:12px;color:#777}"
-        ".btns{display:flex;gap:8px;margin:12px 0}"
-        ".btn{flex:1;text-align:center;padding:12px 4px;border:1px solid #bbb;"
-        "border-radius:8px;text-decoration:none;color:#222;font-size:15px}"
-        ".btn.on{background:#e3eefc;border-color:#2a6fdb;font-weight:bold}"
+        ".seg{display:flex;gap:6px;margin:12px 0}"
+        ".seg a{flex:1;text-align:center;padding:12px 2px;border:1px solid #bbb;"
+        "border-radius:8px;text-decoration:none;color:#222;font-size:14px}"
+        ".seg a.on{background:#e3eefc;border-color:#2a6fdb;font-weight:bold}"
+        ".sos{display:block;text-align:center;background:#d64545;color:#fff;"
+        "font-size:20px;font-weight:bold;padding:16px 0;border-radius:8px;"
+        "text-decoration:none}"
+        ".note{font-size:13px;color:#666;min-height:18px;margin:6px 0 14px;"
+        "text-align:center}"
         "</style></head><body>");
-    ADD("<h1>mesh-rescue</h1>");
-    ADD("<p>You are %s <span class=\"chip s%d\">%s</span></p>",
-        esc, my_status, status_text(my_status));
-    /* ó‘Ôƒ{ƒ^ƒ“B¡‚Ìó‘Ô‚Ìƒ{ƒ^ƒ“‚É‚Í on ‚ğ•t‚¯‚Ä–Ú—§‚½‚¹‚éB */
-    ADD("<div class=\"btns\">"
-        "<a class=\"btn%s\" href=\"/status?s=0\">OK</a>"
-        "<a class=\"btn%s\" href=\"/status?s=1\">Need help</a>"
-        "<a class=\"btn%s\" href=\"/status?s=2\">Trapped</a></div>",
-        my_status == STATUS_OK ? " on" : "",
-        my_status == STATUS_NEED_HELP ? " on" : "",
-        my_status == STATUS_TRAPPED ? " on" : "");
-    ADD("<h2>Nearby people (%d)</h2>", count);
+    ADD("<div class=\"top\"><b>mesh-rescue</b><span class=\"sm\">æ¥ç¶šä¸­</span></div>");
+    ADD("<p class=\"sm\">ã‚ãªãŸ: %s <span class=\"chip s%d\">%s</span></p>",
+        esc, my_status, status_text_ja(my_status));
+
+    /* çŠ¶æ…‹ãƒœã‚¿ãƒ³ã€‚ä»Šã®çŠ¶æ…‹ã®ãƒœã‚¿ãƒ³ã«ã¯ on ã‚’ä»˜ã‘ã¦ç›®ç«‹ãŸã›ã‚‹ã€‚ */
+    ADD("<div class=\"seg\">"
+        "<a class=\"%s\" href=\"/status?s=0\">ç„¡äº‹</a>"
+        "<a class=\"%s\" href=\"/status?s=1\">åŠ©ã‘ãŒå¿…è¦</a>"
+        "<a class=\"%s\" href=\"/status?s=2\">é–‰ã˜è¾¼ã‚</a></div>",
+        my_status == STATUS_OK ? "on" : "",
+        my_status == STATUS_NEED_HELP ? "on" : "",
+        my_status == STATUS_TRAPPED ? "on" : "");
+
+    /* SOSãƒœã‚¿ãƒ³ã¨ã€ç¶šã‘ã¦æŠ¼ã›ãªã„é–“ã®ãƒ¡ãƒƒã‚»ãƒ¼ã‚¸ */
+    ADD("<a class=\"sos\" href=\"/sos\">SOS</a>");
+    if (g_sos_sent && now - g_last_sos < SOS_COOLDOWN_MS)
+        ADD("<div class=\"note\">SOSã‚’é€ã‚Šã¾ã—ãŸã€‚ã‚ã¨%luç§’ã§ã€ã‚‚ã†ä¸€åº¦é€ã‚Œã¾ã™ã€‚</div>",
+            (unsigned long)((SOS_COOLDOWN_MS - (now - g_last_sos) + 999) / 1000));
+    else
+        ADD("<div class=\"note\"></div>");
+
+    /* è¿‘ãã®äººã®ä¸€è¦§ */
+    ADD("<p class=\"sm\">è¿‘ãã®äºº(%d)</p>", count);
     if (count == 0)
-        ADD("<p class=\"age\">Nobody nearby yet.</p>");
+        ADD("<p class=\"sm\">ã¾ã è¿‘ãã«äººãŒã„ã¾ã›ã‚“ã€‚</p>");
     for (i = 0; i < MAX_PEERS; i++) {
         if (!peers[i].used) continue;
         html_escape(esc, sizeof esc, peers[i].name);
-        ADD("<div class=\"row\"><div>%s<div class=\"age\">heard %lu s ago</div></div>"
+        ADD("<div class=\"row\"><div>%s<div class=\"sm\">%luç§’å‰</div></div>"
             "<span class=\"chip s%d\">%s</span></div>",
             esc, (unsigned long)((now - peers[i].last_seen) / 1000),
-            peers[i].status, status_text(peers[i].status));
+            peers[i].status, status_text_ja(peers[i].status));
     }
     ADD("</body></html>");
     return (int)n;
 }
 
-/* ƒuƒ‰ƒEƒU‚©‚ç‚Ì—v‹1‰ñ‚É“š‚¦‚éB
- * /status?s=N ‚Æ‚¢‚¤—v‹‚È‚çA©•ª‚Ìó‘Ô‚ğN‚É•Ï‚¦‚Äƒgƒbƒvƒy[ƒW‚Ö–ß‚·B
- * ‚»‚êˆÈŠO‚Íƒy[ƒW‚ğ•Ô‚·B
- * ó‘Ô‚ğ•Ï‚¦‚½‚Æ‚«‚Í1A•Ï‚¦‚È‚©‚Á‚½‚Æ‚«‚Í0‚ğ•Ô‚·B */
+/* ãƒ–ãƒ©ã‚¦ã‚¶ã«ã€Œãƒˆãƒƒãƒ—ãƒšãƒ¼ã‚¸ã¸ç§»å‹•ã—ã¦ã€ã¨è¿”ã™ã€‚ */
+static void send_redirect(SOCKET c)
+{
+    char head[128];
+    int head_len = snprintf(head, sizeof head,
+        "HTTP/1.1 303 See Other\r\n"
+        "Location: /\r\n"
+        "Content-Length: 0\r\n"
+        "Connection: close\r\n\r\n");
+    send(c, head, head_len, 0);
+}
+
+/* ãƒ–ãƒ©ã‚¦ã‚¶ã‹ã‚‰ã®è¦æ±‚1å›ã«ç­”ãˆã‚‹ã€‚
+ * /status?s=N : è‡ªåˆ†ã®çŠ¶æ…‹ã‚’Nã«å¤‰ãˆã¦ã€ãƒˆãƒƒãƒ—ãƒšãƒ¼ã‚¸ã¸æˆ»ã™ã€‚
+ * /sos        : çŠ¶æ…‹ã‚’ã€ŒåŠ©ã‘ãŒå¿…è¦ã€ä»¥ä¸Šã«ã—ã¦ã€ãƒˆãƒƒãƒ—ãƒšãƒ¼ã‚¸ã¸æˆ»ã™ã€‚
+ *               å‰ã®SOSã‹ã‚‰ SOS_COOLDOWN_MS ãŒéãã¦ã„ãªã„ã¨ãã¯ä½•ã‚‚ã—ãªã„ã€‚
+ * ãã‚Œä»¥å¤–    : ãƒšãƒ¼ã‚¸ã‚’è¿”ã™ã€‚
+ * çŠ¶æ…‹ã‚’å¤‰ãˆãŸã¨ãã¯1ã€å¤‰ãˆãªã‹ã£ãŸã¨ãã¯0ã‚’è¿”ã™ã€‚ */
 static int handle_web(SOCKET web, const char *my_name, int *my_status)
 {
     SOCKET c = accept(web, NULL, NULL);
@@ -213,23 +250,29 @@ static int handle_web(SOCKET web, const char *my_name, int *my_status)
     int n, s = 0, body_len, head_len, changed = 0;
 
     if (c == INVALID_SOCKET) return 0;
-    /* ƒuƒ‰ƒEƒU‚ªÚ‘±‚¾‚¯‚µ‚Ä‰½‚à‘—‚Á‚Ä‚±‚È‚¢ê‡‚ÉA‚¸‚Á‚Æ‘Ò‚½‚È‚¢‚æ‚¤‚É‚·‚éB */
+    /* ãƒ–ãƒ©ã‚¦ã‚¶ãŒæ¥ç¶šã ã‘ã—ã¦ä½•ã‚‚é€ã£ã¦ã“ãªã„å ´åˆã«ã€ãšã£ã¨å¾…ãŸãªã„ã‚ˆã†ã«ã™ã‚‹ã€‚ */
     setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout_ms, sizeof timeout_ms);
     n = recv(c, req, sizeof req - 1, 0);
     if (n > 0) {
         req[n] = '\0';
         if (sscanf(req, "GET /status?s=%d", &s) == 1 && s >= 0 && s <= 2) {
-            /* ó‘Ôƒ{ƒ^ƒ“‚ª‰Ÿ‚³‚ê‚½Bó‘Ô‚ğ•Ï‚¦‚ÄAƒgƒbƒvƒy[ƒW‚Ö–ß‚·B */
+            /* çŠ¶æ…‹ãƒœã‚¿ãƒ³ãŒæŠ¼ã•ã‚ŒãŸã€‚ */
             *my_status = s;
             changed = 1;
-            head_len = snprintf(head, sizeof head,
-                "HTTP/1.1 303 See Other\r\n"
-                "Location: /\r\n"
-                "Content-Length: 0\r\n"
-                "Connection: close\r\n\r\n");
-            send(c, head, head_len, 0);
+            send_redirect(c);
+        } else if (strncmp(req, "GET /sos", 8) == 0) {
+            /* SOSãƒœã‚¿ãƒ³ãŒæŠ¼ã•ã‚ŒãŸã€‚ã‚¯ãƒ¼ãƒ«ãƒ€ã‚¦ãƒ³ä¸­ãªã‚‰ä½•ã‚‚å¤‰ãˆãªã„ã€‚ */
+            DWORD now = GetTickCount();
+            if (!g_sos_sent || now - g_last_sos >= SOS_COOLDOWN_MS) {
+                if (*my_status < STATUS_NEED_HELP)
+                    *my_status = STATUS_NEED_HELP;
+                g_sos_sent = 1;
+                g_last_sos = now;
+                changed = 1;
+            }
+            send_redirect(c);
         } else {
-            /* ‚Ó‚Â‚¤‚Ì—v‹Bƒy[ƒW‚ğ•Ô‚·B */
+            /* ãµã¤ã†ã®è¦æ±‚ã€‚ãƒšãƒ¼ã‚¸ã‚’è¿”ã™ã€‚ */
             body_len = build_page(body, sizeof body, my_name, *my_status);
             head_len = snprintf(head, sizeof head,
                 "HTTP/1.1 200 OK\r\n"
@@ -265,7 +308,7 @@ int main(int argc, char **argv)
     s = socket(AF_INET, SOCK_DGRAM, 0);
     if (s == INVALID_SOCKET) { printf("socket failed\n"); return 1; }
 
-    /* “¯‚¶PC‚Å•¡”‹N“®‚Å‚«‚é‚æ‚¤‚É‚µAƒuƒ[ƒhƒLƒƒƒXƒg‚à‹–‰Â‚·‚éB */
+    /* åŒã˜PCã§è¤‡æ•°èµ·å‹•ã§ãã‚‹ã‚ˆã†ã«ã—ã€ãƒ–ãƒ­ãƒ¼ãƒ‰ã‚­ãƒ£ã‚¹ãƒˆã‚‚è¨±å¯ã™ã‚‹ã€‚ */
     setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char *)&yes, sizeof yes);
     setsockopt(s, SOL_SOCKET, SO_BROADCAST, (char *)&yes, sizeof yes);
 
@@ -287,7 +330,7 @@ int main(int argc, char **argv)
 
     for (;;) {
         fd_set rd;
-        struct timeval tv = {0, 200000}; /* Å‘å200ƒ~ƒŠ•b‘Ò‚Â */
+        struct timeval tv = {0, 200000}; /* æœ€å¤§200ãƒŸãƒªç§’å¾…ã¤ */
         DWORD now;
 
         FD_ZERO(&rd);
@@ -309,7 +352,7 @@ int main(int argc, char **argv)
             }
             if (web != INVALID_SOCKET && FD_ISSET(web, &rd))
                 if (handle_web(web, my_name, &my_status))
-                    last_hello = 0; /* ó‘Ô‚ª•Ï‚í‚Á‚½‚Ì‚ÅA‚·‚®‚É‘—‚é */
+                    last_hello = 0; /* çŠ¶æ…‹ãŒå¤‰ã‚ã£ãŸã®ã§ã€ã™ãã«é€ã‚‹ */
         }
 
         while (_kbhit()) {
@@ -323,7 +366,7 @@ int main(int argc, char **argv)
                 WSACleanup();
                 return 0;
             }
-            last_hello = 0; /* V‚µ‚¢ó‘Ô‚ğ‚·‚®‚É‘—‚é */
+            last_hello = 0; /* æ–°ã—ã„çŠ¶æ…‹ã‚’ã™ãã«é€ã‚‹ */
         }
 
         now = GetTickCount();
