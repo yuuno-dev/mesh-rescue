@@ -1,4 +1,4 @@
-/* peer.c - ステップ1 + 近くの人を表示するWebページ
+/* peer.c - ステップ1 + 近くの人の表示と状態ボタンがあるWebページ
  *
  * UDPブロードキャストを使い、サーバーなしで近くの端末を見つける。
  * 見つけた人の一覧は、ブラウザで開けるページにも表示する。
@@ -170,10 +170,22 @@ static int build_page(char *out, size_t cap, const char *my_name, int my_status)
         ".s1{background:#fff0c2;color:#7a5200}"
         ".s2{background:#ffd6d6;color:#8a1111}"
         ".age{font-size:12px;color:#777}"
+        ".btns{display:flex;gap:8px;margin:12px 0}"
+        ".btn{flex:1;text-align:center;padding:12px 4px;border:1px solid #bbb;"
+        "border-radius:8px;text-decoration:none;color:#222;font-size:15px}"
+        ".btn.on{background:#e3eefc;border-color:#2a6fdb;font-weight:bold}"
         "</style></head><body>");
     ADD("<h1>mesh-rescue</h1>");
     ADD("<p>You are %s <span class=\"chip s%d\">%s</span></p>",
         esc, my_status, status_text(my_status));
+    /* 状態ボタン。今の状態のボタンには on を付けて目立たせる。 */
+    ADD("<div class=\"btns\">"
+        "<a class=\"btn%s\" href=\"/status?s=0\">OK</a>"
+        "<a class=\"btn%s\" href=\"/status?s=1\">Need help</a>"
+        "<a class=\"btn%s\" href=\"/status?s=2\">Trapped</a></div>",
+        my_status == STATUS_OK ? " on" : "",
+        my_status == STATUS_NEED_HELP ? " on" : "",
+        my_status == STATUS_TRAPPED ? " on" : "");
     ADD("<h2>Nearby people (%d)</h2>", count);
     if (count == 0)
         ADD("<p class=\"age\">Nobody nearby yet.</p>");
@@ -189,29 +201,47 @@ static int build_page(char *out, size_t cap, const char *my_name, int my_status)
     return (int)n;
 }
 
-/* ブラウザからの要求1回に、ページを返して答える。 */
-static void handle_web(SOCKET web, const char *my_name, int my_status)
+/* ブラウザからの要求1回に答える。
+ * /status?s=N という要求なら、自分の状態をNに変えてトップページへ戻す。
+ * それ以外はページを返す。
+ * 状態を変えたときは1、変えなかったときは0を返す。 */
+static int handle_web(SOCKET web, const char *my_name, int *my_status)
 {
     SOCKET c = accept(web, NULL, NULL);
     char req[1024], head[256], body[12288];
     DWORD timeout_ms = 300;
-    int n, body_len, head_len;
+    int n, s = 0, body_len, head_len, changed = 0;
 
-    if (c == INVALID_SOCKET) return;
+    if (c == INVALID_SOCKET) return 0;
     /* ブラウザが接続だけして何も送ってこない場合に、ずっと待たないようにする。 */
     setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout_ms, sizeof timeout_ms);
     n = recv(c, req, sizeof req - 1, 0);
     if (n > 0) {
-        body_len = build_page(body, sizeof body, my_name, my_status);
-        head_len = snprintf(head, sizeof head,
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: text/html; charset=utf-8\r\n"
-            "Content-Length: %d\r\n"
-            "Connection: close\r\n\r\n", body_len);
-        send(c, head, head_len, 0);
-        send(c, body, body_len, 0);
+        req[n] = '\0';
+        if (sscanf(req, "GET /status?s=%d", &s) == 1 && s >= 0 && s <= 2) {
+            /* 状態ボタンが押された。状態を変えて、トップページへ戻す。 */
+            *my_status = s;
+            changed = 1;
+            head_len = snprintf(head, sizeof head,
+                "HTTP/1.1 303 See Other\r\n"
+                "Location: /\r\n"
+                "Content-Length: 0\r\n"
+                "Connection: close\r\n\r\n");
+            send(c, head, head_len, 0);
+        } else {
+            /* ふつうの要求。ページを返す。 */
+            body_len = build_page(body, sizeof body, my_name, *my_status);
+            head_len = snprintf(head, sizeof head,
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/html; charset=utf-8\r\n"
+                "Content-Length: %d\r\n"
+                "Connection: close\r\n\r\n", body_len);
+            send(c, head, head_len, 0);
+            send(c, body, body_len, 0);
+        }
     }
     closesocket(c);
+    return changed;
 }
 
 int main(int argc, char **argv)
@@ -278,7 +308,8 @@ int main(int argc, char **argv)
                 }
             }
             if (web != INVALID_SOCKET && FD_ISSET(web, &rd))
-                handle_web(web, my_name, my_status);
+                if (handle_web(web, my_name, &my_status))
+                    last_hello = 0; /* 状態が変わったので、すぐに送る */
         }
 
         while (_kbhit()) {
