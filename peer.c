@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "protocol.h"
+#include "ui.h"
 
 #define WEB_PORT_FIRST 8080
 #define WEB_PORT_LAST  8089
@@ -149,6 +150,7 @@ static void html_escape(char *dst, size_t cap, const char *src)
 
 /* SOSボタンの記録。続けて何回も押されないようにするために使う。 */
 static DWORD g_last_sos = 0; /* 最後にSOSを送った時刻(ミリ秒) */
+static int g_sos_pending = 0;
 static int g_sos_sent = 0;   /* 1 = 一度でもSOSを送った */
 
 /* HTMLページ全体を作り、その長さ(バイト数)を返す。 */
@@ -264,8 +266,7 @@ static int handle_web(SOCKET web, const char *my_name, int *my_status)
             /* SOSボタンが押された。クールダウン中なら何も変えない。 */
             DWORD now = GetTickCount();
             if (!g_sos_sent || now - g_last_sos >= SOS_COOLDOWN_MS) {
-                if (*my_status < STATUS_NEED_HELP)
-                    *my_status = STATUS_NEED_HELP;
+                g_sos_pending = 1;
                 g_sos_sent = 1;
                 g_last_sos = now;
                 changed = 1;
@@ -295,7 +296,7 @@ int main(int argc, char **argv)
     char my_name[NAME_LEN];
     int my_status = STATUS_OK, yes = 1, web_port = 0;
     unsigned my_id;
-    DWORD last_hello = 0, last_draw = 0;
+    DWORD last_hello = 0;
 
     strncpy(my_name, argc > 1 ? argv[1] : "anon", NAME_LEN - 1);
     my_name[NAME_LEN - 1] = '\0';
@@ -327,10 +328,12 @@ int main(int argc, char **argv)
     bcast.sin_port = htons(MESH_PORT);
 
     web = open_web(&web_port);
+    printf("Web: http://localhost:%d\n", web_port);
 
-    for (;;) {
+    ui_open();
+    while (!ui_should_close()) {
         fd_set rd;
-        struct timeval tv = {0, 200000}; /* 最大200ミリ秒待つ */
+        struct timeval tv = {0, 0}; /* 最大200ミリ秒待つ */
         DWORD now;
 
         FD_ZERO(&rd);
@@ -342,11 +345,16 @@ int main(int argc, char **argv)
                 int n = recvfrom(s, buf, sizeof buf - 1, 0, NULL, NULL);
                 if (n > 0) {
                     unsigned id;
+                    unsigned event, target;
                     char name[NAME_LEN];
                     int status;
                     buf[n] = '\0';
-                    if (sscanf(buf, "HELLO|%x|%31[^|]|%d", &id, name, &status) == 3
-                        && id != my_id)
+                    if (sscanf(buf, "ACK|%x|%x|%x|%31[^|]", &target, &event, &id, name) == 4) {
+                        if (target == my_id && id != my_id && g_sos_sent && event == (unsigned)g_last_sos) ui_reply(name);
+                    } else if (sscanf(buf, "SOS|%x|%x|%31[^|]", &id, &event, name) == 3 && id != my_id) {
+                        ui_alert(id, event, name);
+                    } else if (sscanf(buf, "HELLO|%x|%31[^|]|%d", &id, name, &status) == 3
+                        && id != my_id && status >= 0 && status <= 2)
                         update_peer(id, name, status);
                 }
             }
@@ -355,29 +363,52 @@ int main(int argc, char **argv)
                     last_hello = 0; /* 状態が変わったので、すぐに送る */
         }
 
-        while (_kbhit()) {
-            int c = _getch();
-            if (c == '1') my_status = STATUS_OK;
-            else if (c == '2') my_status = STATUS_NEED_HELP;
-            else if (c == '3') my_status = STATUS_TRAPPED;
-            else if (c == 'q') {
-                if (web != INVALID_SOCKET) closesocket(web);
-                closesocket(s);
-                WSACleanup();
-                return 0;
-            }
-            last_hello = 0; /* 新しい状態をすぐに送る */
+        int action = ui_action();
+        if (action == 4) {
+            unsigned target, event;
+            char msg[BUF_SIZE];
+            ui_ack_target(&target, &event);
+            int len = snprintf(msg, sizeof msg, "ACK|%x|%x|%x|%s", target, event, my_id, my_name);
+            if (len > 0 && len < sizeof msg) sendto(s, msg, len, 0, (struct sockaddr *)&bcast, sizeof bcast);
+        } else if (action >= 0 && action <= 2) {
+            my_status = action;
+            last_hello = 0;
+        } else if (action == 3 && (!g_sos_sent || GetTickCount() - g_last_sos >= SOS_COOLDOWN_MS)) {
+            g_sos_pending = 1;
+            g_sos_sent = 1;
+            g_last_sos = GetTickCount();
+            last_hello = 0;
         }
 
+        if (g_sos_pending) {
+            char msg[BUF_SIZE];
+            int len = snprintf(msg, sizeof msg, "SOS|%x|%x|%s", my_id, (unsigned)g_last_sos, my_name);
+            if (len > 0 && len < sizeof msg) sendto(s, msg, len, 0, (struct sockaddr *)&bcast, sizeof bcast);
+            ui_sos_started();
+            g_sos_pending = 0;
+        }
         now = GetTickCount();
-        if (now - last_hello >= HELLO_INTERVAL) {
+        if (!last_hello || now - last_hello >= HELLO_INTERVAL) {
             send_hello(s, &bcast, my_id, my_name, my_status);
             last_hello = now;
         }
-        if (now - last_draw >= 1000) {
-            prune_peers();
-            print_table(my_name, my_status, web_port);
-            last_draw = now;
+        prune_peers();
+        UiPeer list[MAX_PEERS];
+        int count = 0;
+        for (int i = 0; i < MAX_PEERS; i++) {
+            if (!peers[i].used) continue;
+            list[count].name = peers[i].name;
+            list[count].status = peers[i].status;
+            list[count].age = (unsigned long)((now - peers[i].last_seen)/1000);
+            count++;
         }
+        unsigned long elapsed = now - g_last_sos;
+        int cooldown = g_sos_sent && elapsed < SOS_COOLDOWN_MS ? (SOS_COOLDOWN_MS - elapsed + 999)/1000 : 0;
+        ui_draw(my_name, my_status, web_port, list, count, cooldown);
     }
+    ui_close();
+    if (web != INVALID_SOCKET) closesocket(web);
+    closesocket(s);
+    WSACleanup();
+    return 0;
 }
